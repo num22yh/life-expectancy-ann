@@ -1,0 +1,10 @@
+# Python 3.11
+numpy==1.26.4
+pandas==2.2.3
+scikit-learn==1.5.2
+matplotlib==3.9.2
+torch==2.5.1
+nbformat==5.10.4
+nbclient==0.10.2
+ipykernel==6.29.5
+jupyterlab==4.3.4

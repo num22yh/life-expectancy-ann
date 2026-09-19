@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+tmp/
+.env
+.env.*
+data/*.csv
+data/*.zip
+*.pdf
+.DS_Store
+interview_notes/
+docs/
+results/
+AGENTS.md
+README.md
+data/README.md
