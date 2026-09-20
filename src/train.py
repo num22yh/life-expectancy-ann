@@ -1,17 +1,13 @@
 """ANN 학습 및 평가"""
 
 from copy import deepcopy
-import hashlib
-import json
 from pathlib import Path
-import platform
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import sklearn
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
@@ -19,7 +15,7 @@ from sklearn.preprocessing import MinMaxScaler
 import torch
 from torch import nn
 
-from src.download_data import DATA_PATH, DATA_URL
+from src.download_data import DATA_PATH
 from src.model import LifeExpectancyANN
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,13 +35,18 @@ PATIENCE = 300
 MIN_DELTA = 1e-6
 
 
-def prepare_data(path=DATA_PATH):
-    """데이터 전처리"""
+def load_data(path=DATA_PATH):
+    """데이터 로딩"""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError("Run python -m src.download_data first.")
     raw = pd.read_csv(path)
     raw.columns = raw.columns.str.strip()
+    return raw
+
+
+def clean_data(raw):
+    """결측치 제거"""
     required = ["Country", "Year", TARGET, *FEATURES]
     missing = sorted(set(required) - set(raw.columns))
     if missing:
@@ -55,6 +56,11 @@ def prepare_data(path=DATA_PATH):
         raise ValueError("Model data contains infinite values.")
     if clean.duplicated(["Country", "Year"]).any():
         raise ValueError("Duplicate country-year observations need review before splitting.")
+    return clean
+
+
+def prepare_data(clean):
+    """데이터 분할 및 정규화"""
     train_val, test = train_test_split(clean, test_size=0.2, random_state=SEED)
     train, val = train_test_split(train_val, test_size=0.25, random_state=SEED)
     frames = {"train": train, "validation": val, "test": test}
@@ -67,9 +73,8 @@ def prepare_data(path=DATA_PATH):
             torch.tensor(y_scaler.transform(frame[[TARGET]]), dtype=torch.float32),
         )
     return {
-        "raw": raw, "clean": clean, "frames": frames, "arrays": arrays,
+        "frames": frames, "arrays": arrays,
         "x_scaler": x_scaler, "y_scaler": y_scaler,
-        "data_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }
 
 
@@ -183,7 +188,7 @@ def run_experiment(data=None, output_dir=ROOT / "results"):
     torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True)
     if data is None:
-        data = prepare_data()
+        data = prepare_data(clean_data(load_data()))
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     models, histories, best_epochs = {}, {}, {}
@@ -197,7 +202,6 @@ def run_experiment(data=None, output_dir=ROOT / "results"):
             "hidden_nodes": nodes, "best_epoch": best_epoch, "epochs_run": len(history),
             **scores,
         })
-        print(f"ANN {nodes:2d}: validation RMSE={scores['rmse_years']:.3f} years; best epoch={best_epoch}")
     validation = pd.DataFrame(validation_rows)
     best_index = validation["rmse_years"].idxmin()
     selected_nodes = int(validation.loc[best_index, "hidden_nodes"])
@@ -227,40 +231,19 @@ def run_experiment(data=None, output_dir=ROOT / "results"):
         split_rows.append(rows)
     split_table = pd.concat(split_rows).sort_values("source_row")
 
-    train_countries = set(data["frames"]["train"]["Country"])
-    test_countries = set(test["Country"])
-    selected_train_prediction = predict_years(models[selected_nodes], data["arrays"]["train"][0], data["y_scaler"])
-    summary = {
-        "seed": SEED, "features": FEATURES, "target": TARGET,
-        "raw_rows": len(data["raw"]), "complete_rows": len(data["clean"]),
-        "dropped_rows": len(data["raw"]) - len(data["clean"]),
-        "split_rows": {name: len(frame) for name, frame in data["frames"].items()},
-        "raw_countries": int(data["raw"]["Country"].nunique()),
-        "complete_countries": int(data["clean"]["Country"].nunique()),
-        "train_test_shared_countries": len(train_countries & test_countries),
-        "test_countries": len(test_countries),
-        "data_sha256": data["data_sha256"], "data_url": DATA_URL,
-        "hidden_sizes": list(HIDDEN_SIZES), "selected_hidden_nodes": selected_nodes,
-        "activation": "sigmoid", "output": "linear", "loss": "MSE on scaled target",
-        "optimizer": "Adam", "learning_rate": LEARNING_RATE, "batch": "full training set",
-        "max_epochs": MAX_EPOCHS, "patience": PATIENCE, "min_delta": MIN_DELTA,
-        "selected_train_metrics": evaluate(data["frames"]["train"][TARGET], selected_train_prediction),
-        "versions": {"python": platform.python_version(), "numpy": np.__version__,
-                     "pandas": pd.__version__, "scikit_learn": sklearn.__version__,
-                     "matplotlib": matplotlib.__version__, "torch": torch.__version__},
-    }
     metrics.to_csv(output_dir / "metrics.csv", index=False)
     validation.to_csv(output_dir / "validation_results.csv", index=False)
     predictions.to_csv(output_dir / "test_predictions.csv", index=False)
     split_table.to_csv(output_dir / "split.csv", index=False)
     pd.concat(histories.values()).to_csv(output_dir / "training_history.csv", index=False)
-    (output_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     save_figures(histories, predictions, selected_nodes, best_epochs, output_dir)
-    print("\nFinal test evaluation (not used for selection):")
-    print(metrics.round(4).to_string(index=False))
-    return {"metrics": metrics, "validation": validation, "summary": summary,
+    return {"metrics": metrics, "validation": validation,
             "predictions": predictions, "histories": histories}
 
 
 if __name__ == "__main__":
-    run_experiment()
+    result = run_experiment()
+    print("Validation")
+    print(result["validation"].round(4).to_string(index=False))
+    print("\nTest")
+    print(result["metrics"].round(4).to_string(index=False))

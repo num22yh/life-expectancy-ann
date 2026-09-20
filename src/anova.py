@@ -18,11 +18,9 @@ CANDIDATES = [
 ]
 
 
-def run_anova(path=DATA_PATH):
+def run_anova(raw):
     """Type I ANOVA"""
-    raw = pd.read_csv(path)
-    raw.columns = raw.columns.str.strip()
-    data = raw[[TARGET, *CANDIDATES]].dropna()
+    data = raw.rename(columns=str.strip)[[TARGET, *CANDIDATES]].dropna()
     # - 원본 변수 순서에 따른 순차 검정
     # - 전체 자료의 분석 확인용, ANN 입력 목록 고정
     formula = f"Q({TARGET!r}) ~ " + " + ".join(f"Q({name!r})" for name in CANDIDATES)
@@ -37,7 +35,7 @@ def run_anova(path=DATA_PATH):
 
 
 if __name__ == "__main__":
-    table, n_rows = run_anova()
+    table, n_rows = run_anova(pd.read_csv(DATA_PATH))
     output = Path(__file__).resolve().parents[1] / "results" / "anova.csv"
     output.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(output)
